@@ -1,0 +1,47 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "puppygraph"
+version = "0.1.5"
+description = "The project contains the PuppyGraph client and PuppyGraph's Agentic Graph RAG libraries for Python. PuppyGraph client enables dynamic graph querying across multiple data sources with zero ETL, flexible schema management, and support for Cypher and Gremlin queries. PuppyGraph agentic graph RAG library makes graph-aware AI Agents."
+authors = ["PuppyGraph <contact@puppygraph.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+packages=[{include = "puppygraph"}]
+exclude = ["puppygraph/**/test*_.py"]
+
+
+[tool.poetry.dependencies]
+python = ">=3.8.1,<3.12"
+requests = "^2.28"
+gremlinpython = "^3.7.2"
+neo4j = "^5.7.0"
+dacite = "^1.7.0"
+async-timeout="^4.0.3"
+langchain-core = "^0.2.33"
+jinja2 = "^3.1.4"
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4"
+pytest-cov = "^4.1"
+mypy = "^1.10"
+
+
+[tool.poetry.group.apps]
+optional = true
+
+[tool.poetry.group.apps.dependencies]
+langchain-openai = "^0.1.22"
+langchain-community = "^0.2.12"
+gradio = "^4.42.0"
+
+
+[tool.mypy]
+ignore_missing_imports = true
+disallow_untyped_defs = true
+disallow_untyped_calls = true
