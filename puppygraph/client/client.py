@@ -12,6 +12,7 @@ from gremlin_python.driver.serializer import GraphBinarySerializersV1
 from neo4j import Driver as CypherDriver
 from neo4j import GraphDatabase, Query, Result
 from neo4j.exceptions import AuthError, CypherSyntaxError, ServiceUnavailable
+from neo4j.graph import Node, Relationship, Path
 from puppygraph.common.conversion_utils import convert_mapping_config_to_host_json
 from puppygraph.data.host.host_config import PuppyGraphHostConfig
 from puppygraph.data.mapping.graph_mapping_config import PuppyGraphMappingConfig
@@ -193,12 +194,42 @@ def _cypher_query_fn(
         neo4j_query = Query(text=query, timeout=timeout_s)
         try:
             res: Result = session.run(neo4j_query, params)
-            json_data: List[Dict[str, Any]] = [record.data() for record in res]
+            json_data: List[Dict[str, Any]] = [_unpack_value(record) for record in res]
             return json_data
         except CypherSyntaxError as e:
             raise ValueError(f"`{query}` is not valid:\n{e}") from e
         except (AuthError, ServiceUnavailable, TimeoutError) as e:
             raise e
+
+def _unpack_value(value):
+    if isinstance(value, Node):
+        return {
+            "type": "Node",
+            "id": value.element_id,
+            "labels": list(value.labels),
+            "properties": dict(value.items())
+        }
+    elif isinstance(value, Relationship):
+        return {
+            "type": "Relationship",
+            "id": value.element_id,
+            "type_name": value.type,
+            "start_id": value.start_node.element_id,
+            "end_id": value.end_node.element_id,
+            "properties": dict(value.items())
+        }
+    elif isinstance(value, Path):
+        return {
+            "type": "Path",
+            "nodes": [_unpack_value(n) for n in value.nodes],
+            "relationships": [_unpack_value(r) for r in value.relationships]
+        }
+    elif isinstance(value, list):
+        return [_unpack_value(v) for v in value]
+    elif isinstance(value, dict):
+        return {k: _unpack_value(v) for k, v in value.items()}
+    else:
+        return value  # fall back to raw value (int, str, etc.)
 
 
 def _gremlin_query_fn(gremlin_client: GremlinClient.Client, query: str):
