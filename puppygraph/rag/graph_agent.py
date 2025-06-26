@@ -76,7 +76,7 @@ class PuppyGraphAgent:
         self._llm = llm.bind_tools(tools=self._tools)
         self._llm_chain: RunnableSequence = self._chat_prompt_template | self._llm
 
-        self._llm_no_tool_output = llm.bind_tools(tools=self._tools, tool_choice="none")
+        self._llm_no_tool_output = llm.bind_tools(tools=[])
         self._llm_no_tool_output_chain: RunnableSequence = (
             self._chat_prompt_template | self._llm_no_tool_output
         )
