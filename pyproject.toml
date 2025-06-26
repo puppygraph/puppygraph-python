@@ -38,7 +38,7 @@ optional = true
 [tool.poetry.group.apps.dependencies]
 langchain-openai = "^0.3.12"
 langchain-community = "^0.3.21"
-langchain-anthropic = "^0.2.8"
+langchain-anthropic = "^0.2.4"
 gradio = "^4.42.0"
 
 
