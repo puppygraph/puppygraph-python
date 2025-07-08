@@ -30,7 +30,8 @@ class PuppyGraphClient:
         """Initializes a PuppyGraph client."""
         self._config = config
         self._cypher_query_driver = GraphDatabase.driver(
-            f"bolt://{config.ip}:{config.cypher_port}/"
+            f"bolt://{config.ip}:{config.cypher_port}/",
+            max_connection_lifetime=config.cypher_max_connection_lifetime
         )
         self._gremlin_query_client = GremlinClient.Client(
             f"ws://{config.ip}:{config.gremlin_port}/gremlin",

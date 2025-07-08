@@ -15,6 +15,9 @@ class PuppyGraphHostConfig:
 
     # Cypher query port of the PuppyGraph server
     cypher_port: int = 7687
+    
+    # Maximum connection lifetime for the Cypher query driver
+    cypher_max_connection_lifetime: int = 30
 
     # Gremlin query port of the PuppyGraph server
     gremlin_port: int = 8182
