@@ -8,6 +8,8 @@ from langchain_openai import ChatOpenAI
 
 from puppygraph import PuppyGraphClient, PuppyGraphHostConfig
 from puppygraph.rag import PuppyGraphAgent
+from langchain_core.messages import BaseMessage
+from typing import Iterable, List
 
 logging.basicConfig(level=logging.INFO)
 
@@ -136,16 +138,18 @@ def _get_puppy_graph_client(ip) -> PuppyGraphClient:
     return PuppyGraphClient(PuppyGraphHostConfig(ip=ip))
 
 
-def _process_answer(text: str) -> str:
-
-    try:
-        text_dict = yaml.safe_load(text)
-        if "CONCLUSION" in text_dict:
-            return text_dict["CONCLUSION"]
-    except:
-        text_split = text.split("'CONCLUSION':")
-        return text_split[-1].strip("\n}")
-    return text
+def _process_answer(answers: Iterable[BaseMessage]) -> str:
+    reversed_answers = reversed(list(answers))
+    for answer in reversed_answers:
+        text = answer.content
+        try:
+            text_dict = yaml.safe_load(text)
+            if "CONCLUSION" in text_dict:
+                return text_dict["CONCLUSION"]
+        except:
+            text_split = text.split("'CONCLUSION':")
+            return text_split[-1].strip("\n}")
+        return text
 
 
 def _run_queries(pg_agent: PuppyGraphAgent) -> List[str]:
@@ -172,7 +176,7 @@ def _run_queries(pg_agent: PuppyGraphAgent) -> List[str]:
     ]
 
     answers = []
-    for i, query in enumerate(queries[1:2]):
+    for i, query in enumerate(queries):
         print(f"======{i}======")
         print(f"User: {query}")
 
