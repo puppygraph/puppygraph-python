@@ -42,9 +42,10 @@ A conversational AI interface for PuppyGraph that converts natural language ques
 
 ## Installation
 
-1. **Clone and navigate to the demo directory:**
+1. Create a virtual environment and activate it:
    ```bash
-   cd /home/ubuntu/puppygraph/rag-demo
+   python -m venv venv
+   source venv/bin/activate
    ```
 
 2. **Install dependencies:**
