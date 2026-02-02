@@ -4,7 +4,7 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
 name = "puppygraph"
-version = "0.1.5"
+version = "0.1.6"
 description = "The project contains the PuppyGraph client and PuppyGraph's Agentic Graph RAG libraries for Python. PuppyGraph client enables dynamic graph querying across multiple data sources with zero ETL, flexible schema management, and support for Cypher and Gremlin queries. PuppyGraph agentic graph RAG library makes graph-aware AI Agents."
 authors = ["PuppyGraph <contact@puppygraph.com>"]
 license = "Apache-2.0"
