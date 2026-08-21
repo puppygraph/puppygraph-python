@@ -2,9 +2,13 @@
 
 import os
 import sys
-import time
 import logging
-from typing import Dict, Any
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+ENV_PATH = Path(__file__).with_name(".env")
+load_dotenv(ENV_PATH)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -17,29 +21,22 @@ def test_imports():
     try:
         import gradio as gr
         logger.info("✅ Gradio imported successfully")
-    except ImportError as e:
+    except Exception as e:
         logger.error(f"❌ Failed to import Gradio: {e}")
         return False
     
     try:
         from backend import PuppyGraphChatbot
         logger.info("✅ Backend imported successfully")
-    except ImportError as e:
+    except Exception as e:
         logger.error(f"❌ Failed to import backend: {e}")
         return False
     
     try:
         from rag_system import TextToCypherRAG
         logger.info("✅ RAG system imported successfully")
-    except ImportError as e:
+    except Exception as e:
         logger.error(f"❌ Failed to import RAG system: {e}")
-        return False
-    
-    try:
-        import mcp_server
-        logger.info("✅ MCP server imported successfully")
-    except ImportError as e:
-        logger.error(f"❌ Failed to import MCP server: {e}")
         return False
     
     return True
@@ -57,11 +54,20 @@ def test_rag_system():
         
         # Test adding an example
         example = QueryExample(
-            question="Count all nodes",
-            cypher="MATCH (n) RETURN count(n)",
-            description="Counts all nodes in the graph"
+            question="Integration test: count all nodes",
+            cypher="MATCH (n) RETURN count(n) AS integration_node_count",
+            description="Integration-test example"
         )
-        rag.add_example(example)
+        count_before = rag.collection.count()
+        if not rag.add_example(example):
+            logger.error("❌ RAG system rejected the example")
+            return False
+        count_after = rag.collection.count()
+        if count_after != count_before + 1:
+            logger.error(
+                "❌ Example was not stored: count stayed at %s", count_after
+            )
+            return False
         logger.info("✅ Example added to RAG system")
         
         # Test finding similar examples
@@ -84,27 +90,33 @@ def test_backend_basic():
     try:
         from backend import PuppyGraphChatbot
         
-        # Initialize chatbot (this will fail if PuppyGraph is not running)
+        # The app requires a reachable PuppyGraph instance.
         try:
             chatbot = PuppyGraphChatbot()
             logger.info("✅ Backend initialized successfully")
             
             # Test schema retrieval
             schema = chatbot.get_schema()
-            logger.info(f"✅ Schema retrieved: {len(schema.get('vertices', []))} vertices, {len(schema.get('edges', []))} edges")
+            vertex_count = len(schema.get('vertices', []))
+            edge_count = len(schema.get('edges', []))
+            if vertex_count == 0 and edge_count == 0:
+                logger.error("❌ PuppyGraph returned an empty or unsupported schema")
+                return False
+            logger.info(f"✅ Schema retrieved: {vertex_count} vertices, {edge_count} edges")
             
             # Test stats (this might fail if no connection to PuppyGraph)
             stats = chatbot.get_graph_stats()
             if "error" in stats:
-                logger.warning(f"⚠️ Graph stats returned error (PuppyGraph may not be running): {stats['error']}")
+                logger.error(f"❌ Graph stats returned error: {stats['error']}")
+                return False
             else:
                 logger.info(f"✅ Graph stats: {stats.get('node_count', 'unknown')} nodes, {stats.get('edge_count', 'unknown')} edges")
             
             return True
             
         except Exception as e:
-            logger.warning(f"⚠️ Backend connection failed (PuppyGraph may not be running): {e}")
-            return True  # This is expected if PuppyGraph is not running
+            logger.error(f"❌ Backend connection failed: {e}")
+            return False
             
     except Exception as e:
         logger.error(f"❌ Backend test failed: {e}")
@@ -131,17 +143,18 @@ def test_environment_setup():
     logger.info("Testing environment setup...")
     
     # Check for .env file
-    if os.path.exists('.env'):
+    if ENV_PATH.exists():
         logger.info("✅ .env file found")
     else:
         logger.warning("⚠️ .env file not found (using .env.example)")
     
     # Check for Anthropic API key
     anthropic_key = os.getenv('ANTHROPIC_API_KEY')
-    if anthropic_key:
+    if anthropic_key and not anthropic_key.startswith("your_"):
         logger.info("✅ Anthropic API key configured")
     else:
-        logger.warning("⚠️ Anthropic API key not found - RAG functionality may be limited")
+        logger.error("❌ Anthropic API key not configured")
+        return False
     
     return True
 

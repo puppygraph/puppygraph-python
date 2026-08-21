@@ -8,8 +8,7 @@ A conversational AI interface for PuppyGraph that converts natural language ques
 - 🔄 **Multi-Round Execution**: Automatically generates and executes multiple queries as needed
 - ⚡ **Real-time Streaming**: Watch each query step execute live as it happens
 - 🧠 **RAG-Powered**: Uses embeddings and similar examples to improve query generation
-- 🔌 **MCP Integration**: Custom Model Context Protocol server for PuppyGraph
-- 🧭 **Claude Sonnet 4.0**: Powered by Anthropic's latest language model with intelligent stopping
+- 🧭 **Claude Sonnet 5**: Powered by Anthropic's current Sonnet model with intelligent stopping
 - 📊 **Graph Exploration**: Built-in schema viewer and statistics
 - 🎯 **Interactive UI**: Clean Gradio interface with real-time updates
 - 📚 **Learning System**: Add your own examples to improve performance
@@ -26,19 +25,14 @@ A conversational AI interface for PuppyGraph that converts natural language ques
                                 ▼
                        ┌──────────────────┐
                        │                  │
-                       │   MCP Server     │
-                       │                  │
-                       └──────────────────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │                  │
                        │   RAG System     │
                        │ (ChromaDB +      │
                        │  Embeddings +    │
                        │  Claude Sonnet)  │
                        └──────────────────┘
 ```
+
+The chatbot backend connects directly to PuppyGraph over Bolt and HTTP.
 
 ## Installation
 
@@ -69,40 +63,29 @@ A conversational AI interface for PuppyGraph that converts natural language ques
 ### Quick Start
 
 ```bash
-python gradio_app.py
+# From the repository root:
+./apps/chatbot/run.sh
 ```
 
 Then open http://localhost:7860 in your browser.
 
 ### Components
 
-#### 1. MCP Server (`mcp_server.py`)
-Standalone Model Context Protocol server that provides:
-- Cypher query execution
-- Schema introspection  
-- Query validation
-- Graph statistics
-
-Run standalone:
-```bash
-python mcp_server.py
-```
-
-#### 2. RAG System (`rag_system.py`)
+#### 1. RAG System (`rag_system.py`)
 Handles text-to-Cypher conversion using:
 - Sentence embeddings for question similarity
 - ChromaDB for example storage
-- Claude Sonnet 4.0 for query generation
+- Claude Sonnet 5 for query generation
 - Confidence scoring
 
-#### 3. Backend (`backend.py`)
-Coordinates all components:
-- Manages MCP server process
+#### 2. Backend (`backend.py`)
+Coordinates the application components:
 - Integrates RAG system
 - Handles conversation history
+- Connects directly to PuppyGraph over Bolt and HTTP
 - Provides unified API
 
-#### 4. Gradio UI (`gradio_app.py`)
+#### 3. Gradio UI (`gradio_app.py`)
 Interactive web interface with:
 - Chat interface for questions
 - Schema and statistics viewer
@@ -136,7 +119,8 @@ Use the "Add Examples" tab to teach the system new patterns:
 
 ### Environment Variables
 
-- `ANTHROPIC_API_KEY`: Required for Claude Sonnet 4.0 integration
+- `ANTHROPIC_API_KEY`: Required for Anthropic Claude integration
+- `ANTHROPIC_MODEL`: Anthropic model ID (default: claude-sonnet-5)
 - `PUPPYGRAPH_BOLT_URI`: PuppyGraph Bolt endpoint (default: bolt://localhost:7687)
 - `PUPPYGRAPH_HTTP_URI`: PuppyGraph HTTP API (default: http://localhost:8081)
 - `PUPPYGRAPH_USERNAME`: Database username (default: puppygraph)
@@ -147,7 +131,7 @@ Use the "Add Examples" tab to teach the system new patterns:
 #### RAG System
 - **Embedding Model**: Change in `rag_system.py` (default: all-MiniLM-L6-v2)
 - **Vector Database**: ChromaDB configuration
-- **LLM Model**: Claude model selection (default: claude-sonnet-4-20250514)
+- **LLM Model**: Claude model selection (default: claude-sonnet-5)
 
 #### UI Customization
 - **Port**: Modify in `gradio_app.py` (default: 7860)
@@ -177,13 +161,6 @@ chatbot.add_query_example(
 stats = chatbot.get_graph_stats()
 ```
 
-### MCP Server Tools
-
-When running as MCP server, provides these tools:
-- `execute_cypher`: Run Cypher queries
-- `get_schema_info`: Get schema with optional samples
-- `validate_cypher`: Validate query syntax
-
 ## Troubleshooting
 
 ### Common Issues
@@ -191,7 +168,6 @@ When running as MCP server, provides these tools:
 1. **Connection Error**: Ensure PuppyGraph is running and accessible
 2. **Anthropic API Error**: Check your API key and credits
 3. **Import Errors**: Install all requirements with `pip install -r requirements.txt`
-4. **MCP Server Issues**: Check logs for connection problems
 
 ### Logs
 
@@ -218,7 +194,6 @@ print(chatbot.get_graph_stats())
 rag-demo/
 ├── gradio_app.py        # Main Gradio UI application
 ├── backend.py           # Backend coordinator
-├── mcp_server.py        # MCP server implementation  
 ├── rag_system.py        # RAG/text-to-cypher system
 ├── requirements.txt     # Python dependencies
 ├── .env.example         # Environment variables template
@@ -229,15 +204,11 @@ rag-demo/
 
 1. **New Query Types**: Add examples to `rag_system.py`
 2. **UI Components**: Extend tabs in `gradio_app.py`
-3. **MCP Tools**: Add tools in `mcp_server.py`
-4. **Backend Logic**: Extend `backend.py`
+3. **Backend Logic**: Extend `backend.py`
 
 ### Testing
 
 ```bash
-# Test MCP server
-python mcp_server.py
-
 # Test RAG system
 python -c "from rag_system import TextToCypherRAG; rag = TextToCypherRAG(); print('RAG system OK')"
 

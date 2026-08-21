@@ -1,14 +1,17 @@
 import json
+import hashlib
 import logging
+import os
+from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 import chromadb
+from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from anthropic import Anthropic
-import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(Path(__file__).with_name(".env"))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("rag_system")
@@ -69,7 +72,9 @@ class TextToCypherRAG:
         self.embedding_model = SentenceTransformer(embedding_model)
         
         # Initialize ChromaDB
-        self.chroma_client = chromadb.Client()
+        self.chroma_client = chromadb.Client(
+            Settings(anonymized_telemetry=False)
+        )
         self.collection = self.chroma_client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"}
@@ -77,6 +82,9 @@ class TextToCypherRAG:
         
         # Initialize Anthropic client
         self.anthropic_client = Anthropic(api_key=anthropic_api_key or os.getenv("ANTHROPIC_API_KEY"))
+        self.anthropic_model = os.getenv(
+            "ANTHROPIC_MODEL", "claude-sonnet-5"
+        )
         
         # Initialize prompt configuration
         self.prompt_config = prompt_config or PromptConfig()
@@ -148,19 +156,18 @@ class TextToCypherRAG:
     def _add_examples_to_collection(self, examples: List[QueryExample]):
         """Add examples to the ChromaDB collection"""
         if not examples:
-            return
-        
-        # Check if examples already exist
-        existing_count = self.collection.count()
-        if existing_count >= len(examples):
-            logger.info(f"Examples already exist in collection ({existing_count} items)")
-            return
+            return False
         
         # Prepare data for ChromaDB
         questions = [ex.question for ex in examples]
         embeddings = self.embedding_model.encode(questions).tolist()
         
-        ids = [f"example_{i}" for i in range(len(examples))]
+        ids = [
+            "example_" + hashlib.sha256(
+                f"{example.question}\0{example.cypher}".encode("utf-8")
+            ).hexdigest()[:24]
+            for example in examples
+        ]
         documents = questions
         metadatas = [
             {
@@ -172,18 +179,19 @@ class TextToCypherRAG:
         ]
         
         # Add to collection
-        self.collection.add(
+        self.collection.upsert(
             ids=ids,
             embeddings=embeddings,
             documents=documents,
             metadatas=metadatas
         )
         
-        logger.info(f"Added {len(examples)} examples to the collection")
+        logger.info(f"Stored {len(examples)} examples in the collection")
+        return True
     
     def add_example(self, example: QueryExample):
         """Add a single example to the RAG system"""
-        self._add_examples_to_collection([example])
+        return self._add_examples_to_collection([example])
     
     def update_prompt_config(self, prompt_config: PromptConfig):
         """Update the prompt configuration"""
@@ -285,6 +293,7 @@ You will be asked to help answer questions by generating Cypher queries step by 
         
         for vertex in schema.get("vertices", []):
             label = vertex.get("label", "Unknown")
+            ids = vertex.get("ids", [])
             attributes = vertex.get("attributes", [])
             description = vertex.get("description", "").strip()
             
@@ -294,6 +303,10 @@ You will be asked to help answer questions by generating Cypher queries step by 
             # Description section (if available)
             if description:
                 schema_text += f"  Description: {description}\n"
+
+            if ids:
+                id_text = ", ".join([f"{field['name']}:{field['type']}" for field in ids])
+                schema_text += f"  IDs: {id_text}\n"
             
             # Attributes
             if attributes:
@@ -309,6 +322,7 @@ You will be asked to help answer questions by generating Cypher queries step by 
             label = edge.get("label", "Unknown")
             from_vertex = edge.get("from", "Unknown")
             to_vertex = edge.get("to", "Unknown")
+            ids = edge.get("ids", [])
             attributes = edge.get("attributes", [])
             description = edge.get("description", "").strip()
             
@@ -318,6 +332,10 @@ You will be asked to help answer questions by generating Cypher queries step by 
             # Description section (if available)
             if description:
                 schema_text += f"  Description: {description}\n"
+
+            if ids:
+                id_text = ", ".join([f"{field['name']}:{field['type']}" for field in ids])
+                schema_text += f"  IDs: {id_text}\n"
             
             # Attributes
             if attributes:
@@ -411,18 +429,21 @@ You will be asked to help answer questions by generating Cypher queries step by 
         
         try:
             response = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=self.anthropic_model,
                 max_tokens=2000,
-                temperature=0,
                 system=self.get_system_prompt(),
                 tools=[multi_round_tool],
                 tool_choice={"type": "tool", "name": "multi_round_query_decision"},
                 messages=current_messages
             )
             
-            # Extract tool use result
-            if response.content and response.content[0].type == "tool_use":
-                tool_input = response.content[0].input
+            # Adaptive thinking may place thinking blocks before the tool call.
+            tool_use = next(
+                (block for block in response.content if block.type == "tool_use"),
+                None,
+            )
+            if tool_use is not None:
+                tool_input = tool_use.input
                 action = tool_input.get("action", "STOP")
                 explanation = tool_input.get("explanation", "")
                 reasoning = tool_input.get("reasoning", "")
@@ -491,19 +512,20 @@ You will be asked to help answer questions by generating Cypher queries step by 
         
         try:
             response = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model=self.anthropic_model,
                 max_tokens=2000,
-                temperature=1,
-                thinking={
-                  "type": "enabled",
-                  "budget_tokens": 1600
-                },
+                thinking={"type": "adaptive"},
                 system=self.get_system_prompt(),
                 messages=current_messages
             )
             
-            if response.content and response.content[0].type == "text":
-                return response.content[0].text
+            text_blocks = [
+                block.text
+                for block in response.content
+                if block.type == "text"
+            ]
+            if text_blocks:
+                return "\n".join(text_blocks)
             else:
                 # Fallback to basic summary
                 return f"I executed {len(executed_steps)} queries to gather information, but couldn't generate a proper summary."
