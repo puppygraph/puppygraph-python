@@ -5,10 +5,42 @@ Test script to verify query limit functionality
 
 import logging
 import sys
+from types import SimpleNamespace
 from rag_system import TextToCypherRAG, QueryStep
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_query_limits")
+
+
+class FakeMessages:
+    """Return deterministic tool calls without contacting Anthropic."""
+
+    def __init__(self):
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if "tools" not in kwargs:
+            return SimpleNamespace(content=[
+                SimpleNamespace(type="thinking"),
+                SimpleNamespace(
+                    type="text",
+                    text="A deterministic final answer",
+                ),
+            ])
+
+        return SimpleNamespace(content=[
+            SimpleNamespace(type="thinking"),
+            SimpleNamespace(
+                type="tool_use",
+                input={
+                    "action": "CONTINUE",
+                    "cypher_query": "MATCH (n) RETURN count(n) AS node_count",
+                    "explanation": "Count graph nodes",
+                    "reasoning": "A deterministic test response",
+                },
+            ),
+        ])
 
 def test_query_limits():
     """Test that the system properly handles query limits"""
@@ -16,6 +48,8 @@ def test_query_limits():
     try:
         # Initialize RAG system
         rag_system = TextToCypherRAG()
+        fake_messages = FakeMessages()
+        rag_system.anthropic_client = SimpleNamespace(messages=fake_messages)
         
         # Mock schema
         mock_schema = {
@@ -85,10 +119,26 @@ def test_query_limits():
         if should_stop:
             logger.info(f"✅ Round 3: System stopped as expected")
             logger.info(f"Final answer: {explanation}")
-            return True
         else:
             logger.error("❌ Round 3: System should have stopped but continued")
             return False
+
+        summary = rag_system.generate_final_answer_from_steps(question, previous_steps)
+        if summary != "A deterministic final answer":
+            logger.error("❌ Final-answer request did not return the fake response")
+            return False
+
+        for call in fake_messages.calls:
+            if any(name in call for name in ("temperature", "top_p", "top_k")):
+                logger.error("❌ Sonnet 5 request contains deprecated sampling parameters")
+                return False
+            thinking = call.get("thinking", {})
+            if thinking.get("type") == "enabled" or "budget_tokens" in thinking:
+                logger.error("❌ Sonnet 5 request contains manual extended thinking")
+                return False
+
+        logger.info("✅ Sonnet 5 request parameters are compatible")
+        return True
             
     except Exception as e:
         logger.error(f"❌ Test failed with exception: {e}")

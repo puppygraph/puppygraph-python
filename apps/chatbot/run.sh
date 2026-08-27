@@ -4,6 +4,9 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 echo "🐶 PuppyGraph RAG Chatbot Demo"
 echo "================================"
 
@@ -31,9 +34,7 @@ fi
 
 # Run integration tests
 echo "🧪 Running integration tests..."
-python test_integration.py
-
-if [ $? -eq 0 ]; then
+if python test_integration.py; then
     echo "✅ Integration tests passed!"
     echo ""
     echo "🚀 Starting PuppyGraph RAG Chatbot..."
@@ -44,6 +45,6 @@ if [ $? -eq 0 ]; then
     # Start the application
     python gradio_app.py
 else
-    echo "❌ Integration tests failed. Please check the configuration."
+    echo "❌ Integration tests failed. Check .env, PuppyGraph connectivity, and the logs above."
     exit 1
 fi

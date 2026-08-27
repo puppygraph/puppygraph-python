@@ -1,37 +1,52 @@
-import asyncio
 import json
 import logging
-import subprocess
+import os
 import time
-from typing import Dict, Any, List, Optional, Tuple
-from dataclasses import asdict
+from pathlib import Path
+from typing import Dict, Any, List, Optional
 import requests
+from dotenv import load_dotenv
 from rag_system import TextToCypherRAG, QueryExample, PromptConfig
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("backend")
 
 
 class PuppyGraphChatbot:
-    """Main chatbot backend that coordinates MCP server, RAG system, and PuppyGraph"""
+    """Main chatbot backend coordinating the RAG system and PuppyGraph."""
     
     def __init__(self, 
-                 puppygraph_bolt_uri: str = "bolt://localhost:7687",
-                 puppygraph_http_uri: str = "http://localhost:8081", 
-                 puppygraph_username: str = "puppygraph",
-                 puppygraph_password: str = "puppygraph123",
+                 puppygraph_bolt_uri: Optional[str] = None,
+                 puppygraph_http_uri: Optional[str] = None,
+                 puppygraph_username: Optional[str] = None,
+                 puppygraph_password: Optional[str] = None,
                  prompt_config: Optional[PromptConfig] = None):
-        
-        self.puppygraph_bolt_uri = puppygraph_bolt_uri
-        self.puppygraph_http_uri = puppygraph_http_uri
-        self.puppygraph_username = puppygraph_username
-        self.puppygraph_password = puppygraph_password
+
+        self.puppygraph_bolt_uri = (
+            puppygraph_bolt_uri
+            if puppygraph_bolt_uri is not None
+            else os.getenv("PUPPYGRAPH_BOLT_URI", "bolt://localhost:7687")
+        )
+        self.puppygraph_http_uri = (
+            puppygraph_http_uri
+            if puppygraph_http_uri is not None
+            else os.getenv("PUPPYGRAPH_HTTP_URI", "http://localhost:8081")
+        )
+        self.puppygraph_username = (
+            puppygraph_username
+            if puppygraph_username is not None
+            else os.getenv("PUPPYGRAPH_USERNAME", "puppygraph")
+        )
+        self.puppygraph_password = (
+            puppygraph_password
+            if puppygraph_password is not None
+            else os.getenv("PUPPYGRAPH_PASSWORD", "puppygraph123")
+        )
         
         # Initialize RAG system with optional prompt configuration
         self.rag_system = TextToCypherRAG(prompt_config=prompt_config)
-        
-        # MCP server process
-        self.mcp_process = None
         
         # Cache for schema and frequently used data
         self.schema_cache = None
@@ -41,56 +56,15 @@ class PuppyGraphChatbot:
         # Conversation history
         self.conversation_history: List[Dict[str, Any]] = []
     
-    async def start_mcp_server(self):
-        """Start the MCP server process"""
-        try:
-            # Set environment variables for MCP server
-            env = {
-                "PUPPYGRAPH_BOLT_URI": self.puppygraph_bolt_uri,
-                "PUPPYGRAPH_HTTP_URI": self.puppygraph_http_uri,
-                "PUPPYGRAPH_USERNAME": self.puppygraph_username,
-                "PUPPYGRAPH_PASSWORD": self.puppygraph_password
-            }
-            
-            self.mcp_process = subprocess.Popen(
-                ["python", "mcp_server.py"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                env=env
-            )
-            
-            # Give it a moment to start
-            await asyncio.sleep(2)
-            
-            if self.mcp_process.poll() is None:
-                logger.info("MCP server started successfully")
-                return True
-            else:
-                logger.error("MCP server failed to start")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error starting MCP server: {e}")
-            return False
-    
-    def stop_mcp_server(self):
-        """Stop the MCP server process"""
-        if self.mcp_process and self.mcp_process.poll() is None:
-            self.mcp_process.terminate()
-            self.mcp_process.wait()
-            logger.info("MCP server stopped")
-    
     def get_schema(self) -> Dict[str, Any]:
         """Get schema from PuppyGraph with caching"""
         current_time = time.time()
-        
+
         # Return cached schema if still valid
         if (self.schema_cache and 
             current_time - self.schema_cache_time < self.cache_duration):
             return self.schema_cache
-        
+
         try:
             response = requests.get(
                 f"{self.puppygraph_http_uri}/schemajson",
@@ -115,90 +89,124 @@ class PuppyGraphChatbot:
             return self.schema_cache or {"vertices": [], "edges": []}
     
     def _convert_puppygraph_schema(self, raw_schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert PuppyGraph schema format to our expected format based on graph_schema.proto"""
+        """Convert a PuppyGraph v0 or v1 schema into the chatbot schema format."""
         
         try:
-            # Extract graph definition (non-deprecated format)
-            graph_def = raw_schema.get("graph", {})
-            
-            # Convert vertices from Graph.VertexSchema format
-            vertices = []
-            for vertex in graph_def.get("vertices", []):
-                converted_vertex = {
-                    "label": vertex.get("label", "Unknown"),
-                    "attributes": [],
-                    "description": vertex.get("description", "")
-                }
-                
-                # Handle OneToOne mapping (most common)
-                one_to_one = vertex.get("oneToOne", {})
-                if one_to_one:
-                    # Extract attributes from MappedField format
-                    attributes = one_to_one.get("attributes", [])
-                    for attr in attributes:
-                        converted_vertex["attributes"].append({
-                            "name": attr.get("alias", attr.get("field", "unknown")),
-                            "type": self._map_puppygraph_type(attr.get("type", "String"))
-                        })
-                
-                # Handle ManyToOne mapping if present
-                many_to_one = vertex.get("manyToOne", {})
-                if many_to_one:
-                    # For ManyToOne, we'll just show it has complex mapping
-                    converted_vertex["attributes"].append({
-                        "name": "complex_mapping",
-                        "type": "ManyToOne"
-                    })
-                
-                vertices.append(converted_vertex)
-            
-            # Convert edges from Graph.EdgeSchema format
-            edges = []
-            for edge in graph_def.get("edges", []):
-                converted_edge = {
-                    "label": edge.get("label", "Unknown"),
-                    "from": edge.get("fromVertex", "Unknown"),
-                    "to": edge.get("toVertex", "Unknown"),
-                    "attributes": [],
-                    "description": edge.get("description", "")
-                }
-                
-                # Extract attributes from MappedField format
-                attributes = edge.get("attributes", [])
-                for attr in attributes:
-                    converted_edge["attributes"].append({
-                        "name": attr.get("alias", attr.get("field", "unknown")),
-                        "type": self._map_puppygraph_type(attr.get("type", "String"))
-                    })
-                
-                edges.append(converted_edge)
-            
-            return {
-                "vertices": vertices,
-                "edges": edges
-            }
-            
+            if "node" in raw_schema or "edge" in raw_schema:
+                return self._convert_v1_schema(raw_schema)
+
+            return self._convert_v0_schema(raw_schema)
         except Exception as e:
             logger.error(f"Error converting PuppyGraph schema: {e}")
             return {"vertices": [], "edges": []}
+
+    def _convert_v1_schema(self, raw_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert the PuppyGraph 1.x schema shape."""
+        vertices = []
+        for node in raw_schema.get("node", []):
+            vertices.append({
+                "label": node.get("label", "Unknown"),
+                "ids": self._convert_fields(node.get("id", [])),
+                "attributes": self._convert_fields(node.get("attribute", [])),
+                "description": node.get("description", ""),
+            })
+
+        edges = []
+        for edge in raw_schema.get("edge", []):
+            edges.append({
+                "label": edge.get("label", "Unknown"),
+                "from": edge.get("fromNodeLabel", "Unknown"),
+                "to": edge.get("toNodeLabel", "Unknown"),
+                "ids": self._convert_fields(edge.get("id", [])),
+                "from_keys": self._convert_fields(edge.get("fromKey", [])),
+                "to_keys": self._convert_fields(edge.get("toKey", [])),
+                "attributes": self._convert_fields(edge.get("attribute", [])),
+                "description": edge.get("description", ""),
+            })
+
+        return {"vertices": vertices, "edges": edges}
+
+    def _convert_v0_schema(self, raw_schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert the legacy PuppyGraph 0.x schema shape."""
+        graph_def = raw_schema.get("graph", {})
+
+        vertices = []
+        for vertex in graph_def.get("vertices", []):
+            one_to_one = vertex.get("oneToOne", {})
+            converted_vertex = {
+                "label": vertex.get("label", "Unknown"),
+                "ids": self._convert_fields(
+                    one_to_one.get("id", {}).get("fields", [])
+                ),
+                "attributes": self._convert_fields(
+                    one_to_one.get("attributes", [])
+                ),
+                "description": vertex.get("description", "")
+            }
+
+            # Handle ManyToOne mapping if present
+            many_to_one = vertex.get("manyToOne", {})
+            if many_to_one:
+                converted_vertex["attributes"].append({
+                    "name": "complex_mapping",
+                    "type": "ManyToOne"
+                })
+
+            vertices.append(converted_vertex)
+
+        edges = []
+        for edge in graph_def.get("edges", []):
+            converted_edge = {
+                "label": edge.get("label", "Unknown"),
+                "from": edge.get("fromVertex", "Unknown"),
+                "to": edge.get("toVertex", "Unknown"),
+                "ids": self._convert_fields(
+                    edge.get("id", {}).get("fields", [])
+                ),
+                "from_keys": self._convert_fields(
+                    edge.get("fromId", {}).get("fields", [])
+                ),
+                "to_keys": self._convert_fields(
+                    edge.get("toId", {}).get("fields", [])
+                ),
+                "attributes": self._convert_fields(edge.get("attributes", [])),
+                "description": edge.get("description", "")
+            }
+            edges.append(converted_edge)
+
+        return {"vertices": vertices, "edges": edges}
+
+    def _convert_fields(self, fields: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Convert v0 mapped fields or v1 graph fields to a common shape."""
+        return [
+            {
+                "name": field.get(
+                    "name", field.get("alias", field.get("field", "unknown"))
+                ),
+                "type": self._map_puppygraph_type(field.get("type", "String")),
+            }
+            for field in fields
+        ]
     
     def _map_puppygraph_type(self, puppygraph_type: str) -> str:
         """Map PuppyGraph types to standard types"""
         type_mapping = {
-            "String": "String",
-            "Int": "Integer", 
-            "Double": "Double",
-            "Boolean": "Boolean",
-            "Long": "Long",
-            "Float": "Float"
+            "STRING": "String",
+            "INT": "Integer",
+            "INTEGER": "Integer",
+            "DOUBLE": "Double",
+            "BOOLEAN": "Boolean",
+            "LONG": "Long",
+            "FLOAT": "Float"
         }
-        return type_mapping.get(puppygraph_type, "String")
+        return type_mapping.get(str(puppygraph_type).upper(), str(puppygraph_type))
     
     def execute_cypher_direct(self, query: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Execute Cypher query directly against PuppyGraph"""
         from neo4j import GraphDatabase
         from neo4j.exceptions import ServiceUnavailable, AuthError
         
+        driver = None
         try:
             driver = GraphDatabase.driver(
                 self.puppygraph_bolt_uri,
@@ -208,8 +216,6 @@ class PuppyGraphChatbot:
             with driver.session() as session:
                 result = session.run(query, params or {})
                 records = [record.data() for record in result]
-                
-            driver.close()
             
             return {
                 "success": True,
@@ -241,6 +247,9 @@ class PuppyGraphChatbot:
                 "error": str(e),
                 "query": query
             }
+        finally:
+            if driver is not None:
+                driver.close()
     
     def process_natural_language_query_streaming(self, question: str):
         """Process a natural language question with streaming progress updates"""
@@ -474,8 +483,7 @@ class PuppyGraphChatbot:
                 cypher=cypher,
                 description=description
             )
-            self.rag_system.add_example(example)
-            return True
+            return bool(self.rag_system.add_example(example))
         except Exception as e:
             logger.error(f"Error adding query example: {e}")
             return False
@@ -502,17 +510,22 @@ class PuppyGraphChatbot:
     def get_graph_stats(self) -> Dict[str, Any]:
         """Get basic graph statistics"""
         try:
-            stats_query = """
-            MATCH (n) 
-            WITH count(n) as node_count
-            MATCH ()-[r]->()  
-            RETURN node_count, count(r) as edge_count
-            """
+            node_result = self.execute_cypher_direct(
+                "MATCH (n) RETURN count(n) as node_count"
+            )
+            edge_result = self.execute_cypher_direct(
+                "MATCH ()-[r]->() RETURN count(r) as edge_count"
+            )
             
-            result = self.execute_cypher_direct(stats_query)
-            
-            if result["success"] and result["data"]:
-                stats = result["data"][0]
+            if node_result["success"] and edge_result["success"]:
+                node_count = (
+                    node_result["data"][0].get("node_count", 0)
+                    if node_result["data"] else 0
+                )
+                edge_count = (
+                    edge_result["data"][0].get("edge_count", 0)
+                    if edge_result["data"] else 0
+                )
                 
                 # Get node labels and relationship types separately
                 node_labels = []
@@ -535,23 +548,19 @@ class PuppyGraphChatbot:
                     pass
                 
                 return {
-                    "node_count": stats.get("node_count", 0),
-                    "edge_count": stats.get("edge_count", 0),
+                    "node_count": node_count,
+                    "edge_count": edge_count,
                     "node_labels": node_labels,
                     "relationship_types": relationship_types
                 }
             else:
-                return {"node_count": 0, "edge_count": 0, "node_labels": [], "relationship_types": []}
+                error = node_result.get("error") or edge_result.get("error")
+                return {"error": error or "Failed to query graph statistics"}
                 
         except Exception as e:
             logger.error(f"Error getting graph stats: {e}")
             return {"error": str(e)}
     
-    def cleanup(self):
-        """Cleanup resources"""
-        self.stop_mcp_server()
-
-
 # Global chatbot instance
 chatbot = None
 
@@ -566,5 +575,4 @@ def shutdown_chatbot():
     """Shutdown the global chatbot instance"""
     global chatbot
     if chatbot:
-        chatbot.cleanup()
         chatbot = None

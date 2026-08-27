@@ -2,6 +2,7 @@
 
 import gradio as gr
 import json
+import os
 import time
 from typing import List, Tuple, Dict, Any
 import logging
@@ -106,12 +107,11 @@ def get_schema_info() -> str:
             schema_text += "🟢 **Vertices:**\n"
             for vertex in vertices:
                 label = vertex.get("label", "Unknown")
+                ids = vertex.get("ids", [])
                 attributes = vertex.get("attributes", [])
-                if attributes:
-                    attr_text = ", ".join([f"{attr['name']}:{attr['type']}" for attr in attributes])
-                    schema_text += f"  • **{label}**: {attr_text}\n"
-                else:
-                    schema_text += f"  • **{label}**: (no attributes)\n"
+                id_text = ", ".join([f"{field['name']}:{field['type']}" for field in ids]) or "(none)"
+                attr_text = ", ".join([f"{attr['name']}:{attr['type']}" for attr in attributes]) or "(none)"
+                schema_text += f"  • **{label}** — IDs: {id_text}; Attributes: {attr_text}\n"
             schema_text += "\n"
         
         if edges:
@@ -560,9 +560,9 @@ Provide:
             - Type natural language questions about your graph
             - **Real-time streaming**: Watch each query step execute live as it happens
             - **Multi-round execution**: generates and runs multiple Cypher queries as needed
-            - Claude Sonnet 4.0 decides when it has enough information to provide a complete answer
+            - Claude Sonnet 5 decides when it has enough information to provide a complete answer
             - **🆕 Full conversation transparency**: See complete details including:
-              - Full prompts sent to Claude Sonnet 4.0 with schema and context
+              - Full prompts sent to Claude Sonnet 5 with schema and context
               - Complete LLM responses showing reasoning and decision-making
               - All generated Cypher queries with explanations
               - Full query results with detailed data samples
@@ -586,7 +586,7 @@ Provide:
             - **Reset to defaults**: Easily restore original prompt settings
             
             ### 📝 Debug/Prompts Tab
-            - View the exact prompts sent to Claude Sonnet 4.0 for query generation
+            - View the exact prompts sent to Claude Sonnet 5 for query generation
             - View the raw LLM responses received from Claude
             - Useful for understanding how the RAG system works and debugging issues
             - Prompts include schema info, similar examples, and conversation context
@@ -594,8 +594,7 @@ Provide:
             ### 🔧 Technical Details
             - **Backend**: Python with FastAPI
             - **Graph DB**: PuppyGraph (Cypher queries via Bolt protocol)
-            - **RAG System**: ChromaDB + SentenceTransformers + Claude Sonnet 4.0
-            - **MCP Integration**: Custom Model Context Protocol server
+            - **RAG System**: ChromaDB + SentenceTransformers + Claude Sonnet 5
             
             ### 💡 Tips
             - Be specific in your questions for better results
@@ -625,8 +624,8 @@ def main():
         
         logger.info("Starting Gradio interface...")
         interface.launch(
-            server_name="0.0.0.0",
-            server_port=7860,
+            server_name=os.getenv("GRADIO_SERVER_NAME", "0.0.0.0"),
+            server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
             share=False,
             show_error=True,
             debug=True
