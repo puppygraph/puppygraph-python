@@ -196,7 +196,11 @@ def _cypher_query_fn(
         neo4j_query = Query(text=query, timeout=timeout_s)
         try:
             res: Result = session.run(neo4j_query, params)
-            json_data: List[Dict[str, Any]] = [_unpack_value(record) for record in res]
+            # Record.data() loses graph metadata; keep raw values for unpacking.
+            json_data: List[Dict[str, Any]] = [
+                {key: _unpack_value(value) for key, value in record.items()}
+                for record in res
+            ]
             return json_data
         except CypherSyntaxError as e:
             raise ValueError(f"`{query}` is not valid:\n{e}") from e
